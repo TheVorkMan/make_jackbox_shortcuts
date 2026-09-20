@@ -41,7 +41,10 @@
 # wrongly contains the Naughty Pack id 2652000; the real JPP5 appid is 774461.)
 #
 # Generated .sh scripts do NOT use "exec" (plain invocation, cwd normalized),
-# because exec broke launches on some setups.
+# because exec broke launches on some setups. The deep-link URLs (steam://...,
+# heroic://...) are passed UNQUOTED on purpose too: quoting them triggers the
+# same launch failure. They contain no shell metacharacters (spaces are
+# %-encoded), so an unquoted call is safe.
 # =============================================================================
 set -u
 
@@ -445,13 +448,16 @@ match_game() {  # $1=pid  $2=scanned folder  $3=scanned swf stem
 }
 
 # -----------------------------------------------------------------------------
-# Generated launch commands (NO exec - plain calls, cwd normalized)
+# Generated launch commands: plain calls, normalized cwd, NO exec and NO
+# quotes around the deep-link URL (quoted URLs break the launch).
 # -----------------------------------------------------------------------------
 launch_body_steam() {  # $1=appid  $2=game folder ("" -> plain run)  $3=swf stem
   local uri="steam://run/$1//"
   [ -n "$2" ] && uri="$uri-launchTo games/$2/$3.swf -jbg.config isBundle=false"
   [ -n "$EXTRA_ARGS" ] && uri="$uri $EXTRA_ARGS"
-  printf 'cd "${HOME:-/}" 2>/dev/null || true\nif command -v steam >/dev/null 2>&1; then\n  steam "%s"\nelse\n  xdg-open "%s"\nfi' "$uri" "$uri"
+  # Deliberately unquoted below: passing the URL as one quoted argv entry
+  # makes Steam fail to launch (same symptom as the old exec bug).
+  printf 'cd "${HOME:-/}" 2>/dev/null || true\nif command -v steam >/dev/null 2>&1; then\n  steam %s\nelse\n  xdg-open %s\nfi' "$uri" "$uri"
 }
 
 launch_body_heroic() {  # $1=heroic game id  $2=game folder ("" -> plain launch)  $3=swf stem
@@ -462,16 +468,20 @@ launch_body_heroic() {  # $1=heroic game id  $2=game folder ("" -> plain launch)
   elif [ -n "$extra" ]; then
     url="$url?args=${extra#%20}"
   fi
+  # Unquoted on purpose, like the Steam body: the URL has no shell
+  # metacharacters (spaces are %20-encoded).
   if [ "$HEROIC_VARIANT" = "flatpak" ]; then
-    printf 'cd "${HOME:-/}" 2>/dev/null || true\nflatpak run com.heroicgameslauncher.hgl --no-gui "%s"' "$url"
+    printf 'cd "${HOME:-/}" 2>/dev/null || true\nflatpak run com.heroicgameslauncher.hgl --no-gui %s' "$url"
   else
-    printf 'cd "${HOME:-/}" 2>/dev/null || true\nheroic "%s" --no-gui' "$url"
+    printf 'cd "${HOME:-/}" 2>/dev/null || true\nheroic %s --no-gui' "$url"
   fi
 }
 
 launch_body_native() {  # $1=pack dir  $2=command to run inside it
   local cmd="$2"
   [ -n "$EXTRA_ARGS" ] && cmd="$cmd $EXTRA_ARGS"
+  # Only the cd target keeps its quotes (pack folders may contain spaces);
+  # the launcher command and its arguments stay unquoted.
   printf 'cd "%s" || exit 1\n%s' "$1" "$cmd"
 }
 
@@ -1173,13 +1183,13 @@ log "Icons were copied to: $OUT_DIR/icons"
 log ""
 case "$MODE" in
   steam)
-    log "Note: the .sh files call Steam with steam://run/... URLs - Steam starts"
-    log "each single game directly. No exec is used anymore."
+    log "Note: the .sh files call Steam with unquoted steam://run/... URLs -"
+    log "Steam starts each single game directly. No exec, no quotes."
     ;;
   heroic)
     if [ "$HEROIC_VARIANT" = "flatpak" ]; then
       log "Note: the .sh files run 'flatpak run com.heroicgameslauncher.hgl --no-gui'"
-      log "with heroic://launch/... deep links (args are %-encoded)."
+      log "with unquoted heroic://launch/... deep links (args are %-encoded)."
     else
       log "Note: the .sh files call the 'heroic' command with heroic://launch/..."
       log "deep links and --no-gui."
